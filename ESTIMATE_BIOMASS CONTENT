@@ -1,0 +1,76 @@
+// Define the study area (Kenya boundary)
+var kenya = ee.FeatureCollection("FAO/GAUL/2015/level0")
+                .filter(ee.Filter.eq('ADM0_NAME', 'Kenya'));
+
+// Load Sentinel-2 imagery, ensuring consistent band selection
+var sentinel = ee.ImageCollection("COPERNICUS/S2")
+                .filterBounds(kenya)
+                .filterDate('2023-01-01', '2023-12-31')
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+                .select(['B4', 'B8']) // Ensuring uniform band selection
+                .median();
+
+// Ensure sentinel data is valid
+sentinel = ee.Algorithms.If(sentinel.bandNames().length().gt(0), sentinel, ee.Image(0));
+
+// Calculate NDVI as a proxy for vegetation biomass
+var ndvi = ee.Image(sentinel).normalizedDifference(['B8', 'B4']).rename('NDVI');
+
+// Define a simple biomass estimation model (assumes NDVI is proportional to biomass)
+var biomass = ndvi.multiply(100).rename('Biomass'); // Example conversion factor
+
+// Clip to Kenya
+var biomassKenya = biomass.clip(kenya);
+
+// Display the biomass map
+Map.centerObject(kenya, 6);
+Map.addLayer(biomassKenya, {min: 0, max: 100, palette: ['yellow', 'green']}, 'Biomass');
+
+// Add a legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px'
+  }
+});
+
+var legendTitle = ui.Label({
+  value: 'Biomass Index',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+
+var palette = ['yellow', 'green'];
+var names = ['Low', 'High'];
+
+var legendBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0),
+  params: {bbox: [0, 0, 1, 0.1], dimensions: '100x10', format: 'png', min: 0, max: 1, palette: palette},
+  style: {stretch: 'horizontal', margin: '0 8px'}
+});
+
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(names[0], {margin: '4px 8px'}),
+    ui.Label(names[1], {margin: '4px 8px', textAlign: 'right', stretch: 'horizontal'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+
+legend.add(legendTitle);
+legend.add(legendBar);
+legend.add(legendLabels);
+Map.add(legend);
+
+// Export biomass data to Google Drive
+Export.image.toDrive({
+  image: biomassKenya,
+  description: 'Kenya_Carbon_Estimation',
+  scale: 500,
+  region: kenya.geometry(),
+  fileFormat: 'GeoTIFF'
+});
